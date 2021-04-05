@@ -16,7 +16,7 @@ jobs:
           #
           # The default is the current directory
           #
-          USE_SUBDIR: .
+          USE_SUBDIR: /arduino/opencr_arduino/opencr/libraries/OpenCR/examples
 
           # Not all libraries include examples or unit tests.  The default
           #  behavior of arduino_ci is to assume that "if the files don't
