@@ -27,6 +27,11 @@ echo -e "\n#####################################################################
 echo "INSTALLING DEPENDENCIES"
 echo "########################################################################";
 
+echo -n "branch param 0: "
+echo $0
+echo -n "branch param 1: "
+echo $1
+
 # install i386 archtecture library
 sudo dpkg --add-architecture i386
 sudo apt-get update
