@@ -27,11 +27,6 @@ echo -e "\n#####################################################################
 echo "INSTALLING DEPENDENCIES"
 echo "########################################################################";
 
-echo -n "branch param 0: "
-echo $0
-echo -n "branch param 1: "
-echo $1
-
 # install i386 archtecture library
 sudo dpkg --add-architecture i386
 sudo apt-get update
@@ -47,12 +42,10 @@ DEPENDENCY_OUTPUT=$(arduino --install-boards OpenCR:OpenCR 2>&1)
 if [ $? -ne 0 ]; then echo -e "\xe2\x9c\x96"; else echo -e "\xe2\x9c\x93"; fi
 
 # Update OpenCR package manually
-if [ $0 == "refs/heads/master" ]; then
+if [ $1 == "refs/heads/master" ]; then
   git clone --recursive https://github.com/ROBOTIS-Will/OpenCR.git --branch master --single-branch
-  echo $0
-elif [ $0 == "refs/heads/develop" ]; then
+elif [ $1 == "refs/heads/develop" ]; then
   git clone --recursive https://github.com/ROBOTIS-Will/OpenCR.git --branch develop --single-branch
-  echo $0
 else
   echo -e "\xe2\x9c\x93";
 fi
