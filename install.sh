@@ -16,9 +16,9 @@ sleep 3
 export DISPLAY=:1.0
 
 # download and install arduino 1.8.5
-wget https://downloads.arduino.cc/arduino-1.8.5-linux64.tar.xz
-tar xf arduino-1.8.5-linux64.tar.xz
-mv arduino-1.8.5 $HOME/arduino_ide
+# wget https://downloads.arduino.cc/arduino-1.8.5-linux64.tar.xz
+# tar xf arduino-1.8.5-linux64.tar.xz
+# mv arduino-1.8.5 $HOME/arduino_ide
 
 # add the arduino CLI to our PATH
 export PATH="$HOME/arduino_ide:$PATH"
@@ -28,26 +28,29 @@ echo "INSTALLING DEPENDENCIES"
 echo "########################################################################";
 
 # install i386 archtecture library
-sudo dpkg --add-architecture i386
-sudo apt-get update
-sudo apt-get install libc6:i386
+# sudo dpkg --add-architecture i386
+# sudo apt-get update
+# sudo apt-get install libc6:i386
 
 # install other board packages
-echo -n "ADD OpenCR PACKAGE INDEX: "
-DEPENDENCY_OUTPUT=$(arduino --pref "boardsmanager.additional.urls=https://raw.githubusercontent.com/ROBOTIS-GIT/OpenCR/master/arduino/opencr_release/package_opencr_index.json" --save-prefs 2>&1)
-if [ $? -ne 0 ]; then echo -e "\xe2\x9c\x96"; else echo -e "\xe2\x9c\x93"; fi
+# echo -n "ADD OpenCR PACKAGE INDEX: "
+# DEPENDENCY_OUTPUT=$(arduino --pref "boardsmanager.additional.urls=https://raw.githubusercontent.com/ROBOTIS-GIT/OpenCR/master/arduino/opencr_release/package_opencr_index.json" --save-prefs 2>&1)
+# if [ $? -ne 0 ]; then echo -e "\xe2\x9c\x96"; else echo -e "\xe2\x9c\x93"; fi
 
-echo -n "INSTALL OpenCR: "
-DEPENDENCY_OUTPUT=$(arduino --install-boards OpenCR:OpenCR 2>&1)
-if [ $? -ne 0 ]; then echo -e "\xe2\x9c\x96"; else echo -e "\xe2\x9c\x93"; fi
+# echo -n "INSTALL OpenCR: "
+# DEPENDENCY_OUTPUT=$(arduino --install-boards OpenCR:OpenCR 2>&1)
+# if [ $? -ne 0 ]; then echo -e "\xe2\x9c\x96"; else echo -e "\xe2\x9c\x93"; fi
 
 # Update OpenCR package manually
 if [ $0 == "refs/heads/master" ]; then
   git clone --recursive https://github.com/ROBOTIS-Will/OpenCR.git --branch master --single-branch
+  echo $0
 elif [ $0 == "refs/heads/develop" ]; then
   git clone --recursive https://github.com/ROBOTIS-Will/OpenCR.git --branch develop --single-branch
+  echo $0
 else
   echo -e "\xe2\x9c\x93"; 
+  echo $0
 fi
 
 rm -rf $HOME/.arduino15/packages/OpenCR/hardware
