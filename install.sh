@@ -47,7 +47,9 @@ if [ $0 == "refs/heads/master" ]; then
 elif [ $0 == "refs/heads/develop" ]; then
   git clone --recursive https://github.com/ROBOTIS-Will/OpenCR.git --branch develop --single-branch
 else
+  echo -e "\xe2\x9c\x93"; 
 fi
+
 rm -rf $HOME/.arduino15/packages/OpenCR/hardware
 mkdir $HOME/Arduino/hardware
 mkdir $HOME/Arduino/hardware/OpenCR
