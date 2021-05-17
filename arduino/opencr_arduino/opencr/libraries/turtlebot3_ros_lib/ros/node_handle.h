@@ -391,7 +391,7 @@ public:
 
   Time now()
   {
-    uint32_t ms = hardware_.time();
+    uint32_t ms = hardware_.time()-last_sync_receive_time;
     Time current_time;
     current_time.sec = ms / 1000 + sec_offset;
     current_time.nsec = (ms % 1000) * 1000000UL + nsec_offset;
@@ -401,9 +401,9 @@ public:
 
   void setNow(Time & new_now)
   {
-    uint32_t ms = hardware_.time();
-    sec_offset = new_now.sec - ms / 1000 - 1;
-    nsec_offset = new_now.nsec - (ms % 1000) * 1000000UL + 1000000000UL;
+    //uint32_t ms = hardware_.time();
+    sec_offset = new_now.sec;
+    nsec_offset = new_now.nsec;
     normalizeSecNSec(sec_offset, nsec_offset);
   }
 
@@ -647,7 +647,7 @@ public:
   {
     if (requestParam(name, timeout))
     {
-      if (length == req_param_resp.strings_length)
+      if (length == (int)req_param_resp.strings_length)
       {
         //copy it over
         for (int i = 0; i < length; i++)

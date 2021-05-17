@@ -7,8 +7,7 @@
 #define PROTOCOL_VERSION2               2.0
 
 // Default setting
-#define DEVICENAME                      "/dev/OpenCR"       // Check which port is being used on your controller
-                                                            // ex) Windows: "COM1"   Linux: "/dev/ttyUSB0"
+#define DEVICENAME                      "OpenCR_DXL_Port"   // This definition only has a symbolic meaning and does not affect to any functionality
 
 
 #define CMD_SERIAL    Serial                                // USB Serial
@@ -129,7 +128,10 @@ char * fgets ( char * str, int num, FILE * stream )
 
       if( index < num-1 && ch != 0x0D )
       {
-        str[index++] = ch;
+        if ( ch != 0X0A )  // Ignore line feeds
+        {
+          str[index++] = ch;
+        }
       }
       if( ch == 0x0D)
       {
@@ -489,7 +491,7 @@ void dxl_monitor_main(void)
         std::vector<unsigned char> vec;
 
         int dxl_comm_result = packetHandler2->broadcastPing(portHandler, vec);
-        if (dxl_comm_result != COMM_SUCCESS) packetHandler2->printTxRxResult(dxl_comm_result);
+        if (dxl_comm_result != COMM_SUCCESS) _fprintf(stderr, (char*) "%s\n", packetHandler2->getTxRxResult(dxl_comm_result));
 
         for (unsigned int i = 0; i < vec.size(); i++)
         {
@@ -640,12 +642,12 @@ void dxl_monitor_main(void)
         int dxl_comm_result = packetHandler2->reboot(portHandler, atoi(param[0]), &dxl_error);
         if (dxl_comm_result == COMM_SUCCESS)
         {
-          if (dxl_error != 0) packetHandler2->printRxPacketError(dxl_error);
+          if (dxl_error != 0) packetHandler2->getRxPacketError(dxl_error);
           _fprintf(stderr, (char*) "\n Success to reboot! \n\n");
         }
         else
         {
-          packetHandler2->printTxRxResult(dxl_comm_result);
+          _fprintf(stderr, (char*) "%s\n", packetHandler2->getTxRxResult(dxl_comm_result));
           _fprintf(stderr, (char*) "\n Fail to reboot! \n\n");
         }
       }
@@ -662,12 +664,12 @@ void dxl_monitor_main(void)
         if (dxl_comm_result == COMM_SUCCESS)
         {
           if (dxl_error != 0)
-            packetHandler1->printRxPacketError(dxl_error);
+            packetHandler1->getRxPacketError(dxl_error);
           _fprintf(stderr, (char*) "\n Success to reset! \n\n");
         }
         else
         {
-          packetHandler1->printTxRxResult(dxl_comm_result);
+          _fprintf(stderr, (char*) "%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
           _fprintf(stderr, (char*) "\n Fail to reset! \n\n");
         }
       }
@@ -683,12 +685,12 @@ void dxl_monitor_main(void)
         int dxl_comm_result = packetHandler2->factoryReset(portHandler, atoi(param[0]), atoi(param[1]), &dxl_error);
         if (dxl_comm_result == COMM_SUCCESS)
         {
-          if (dxl_error != 0) packetHandler2->printRxPacketError(dxl_error);
+          if (dxl_error != 0) packetHandler2->getRxPacketError(dxl_error);
           _fprintf(stderr, (char*) "\n Success to reset! \n\n");
         }
         else
         {
-          packetHandler2->printTxRxResult(dxl_comm_result);
+          _fprintf(stderr, (char*) "%s\n", packetHandler2->getTxRxResult(dxl_comm_result));
           _fprintf(stderr, (char*) "\n Fail to reset! \n\n");
         }
       }

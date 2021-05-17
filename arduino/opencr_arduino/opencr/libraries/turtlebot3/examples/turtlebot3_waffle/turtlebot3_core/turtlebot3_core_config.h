@@ -18,18 +18,15 @@
 
 #ifndef TURTLEBOT3_CORE_CONFIG_H_
 #define TURTLEBOT3_CORE_CONFIG_H_
+// #define NOETIC_SUPPORT          //uncomment this if writing code for ROS1 Noetic
 
 #include <ros.h>
 #include <ros/time.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Empty.h>
 #include <std_msgs/Int32.h>
-#include <sensor_msgs/Imu.h>
 #include <sensor_msgs/JointState.h>
-#include <sensor_msgs/BatteryState.h>
-#include <sensor_msgs/MagneticField.h>
 #include <geometry_msgs/Vector3.h>
-#include <geometry_msgs/Twist.h>
 #include <tf/tf.h>
 #include <tf/transform_broadcaster.h>
 #include <nav_msgs/Odometry.h>
@@ -43,11 +40,10 @@
 
 #include <math.h>
 
-#define HARDWARE_VER "1.0.0"
-#define SOFTWARE_VER "1.0.0"
-#define FIRMWARE_VER "1.2.0"
+#define FIRMWARE_VER "1.2.6"
 
 #define CONTROL_MOTOR_SPEED_FREQUENCY          30   //hz
+#define CONTROL_MOTOR_TIMEOUT                  500  //ms
 #define IMU_PUBLISH_FREQUENCY                  200  //hz
 #define CMD_VEL_PUBLISH_FREQUENCY              30   //hz
 #define DRIVE_INFORMATION_PUBLISH_FREQUENCY    30   //hz
@@ -89,16 +85,17 @@ void publishBatteryStateMsg(void);
 void publishDriveInformation(void);
 
 ros::Time rosNow(void);
-ros::Time addMicros(ros::Time & t, uint32_t _micros);
+ros::Time addMicros(ros::Time & t, uint32_t _micros); // deprecated
 
-void updateVariable(void);
+void updateVariable(bool isConnected);
 void updateMotorInfo(int32_t left_tick, int32_t right_tick);
 void updateTime(void);
 void updateOdometry(void);
 void updateJoint(void);
 void updateTF(geometry_msgs::TransformStamped& odom_tf);
-void updateGyroCali(void);
+void updateGyroCali(bool isConnected);
 void updateGoalVelocity(void);
+void updateTFPrefix(bool isConnected);
 
 void initOdom(void);
 void initJointStates(void);
@@ -106,6 +103,7 @@ void initJointStates(void);
 bool calcOdometry(double diff_time);
 
 void sendLogMsg(void);
+void waitForSerialLink(bool isConnected);
 
 /*******************************************************************************
 * ROS NodeHandle
@@ -113,6 +111,20 @@ void sendLogMsg(void);
 ros::NodeHandle nh;
 ros::Time current_time;
 uint32_t current_offset;
+
+/*******************************************************************************
+* ROS Parameter
+*******************************************************************************/
+char get_prefix[10];
+char* get_tf_prefix = get_prefix;
+
+char odom_header_frame_id[30];
+char odom_child_frame_id[30];
+
+char imu_frame_id[30];
+char mag_frame_id[30];
+
+char joint_state_header_frame_id[30];
 
 /*******************************************************************************
 * Subscriber
@@ -134,7 +146,7 @@ ros::Publisher sensor_state_pub("sensor_state", &sensor_state_msg);
 
 // Version information of Turtlebot3
 turtlebot3_msgs::VersionInfo version_info_msg;
-ros::Publisher version_info_pub("version_info", &version_info_msg);
+ros::Publisher version_info_pub("firmware_version", &version_info_msg);
 
 // IMU of Turtlebot3
 sensor_msgs::Imu imu_msg;
@@ -153,7 +165,11 @@ sensor_msgs::JointState joint_states;
 ros::Publisher joint_states_pub("joint_states", &joint_states);
 
 // Battey state of Turtlebot3
+#if defined NOETIC_SUPPORT
+sensor_msgs::BatteryStateNoetic battery_state_msg;
+#else
 sensor_msgs::BatteryState battery_state_msg;
+#endif
 ros::Publisher battery_state_pub("battery_state", &battery_state_msg);
 
 // Magnetic field
@@ -181,7 +197,7 @@ Turtlebot3MotorDriver motor_driver;
 * Calculation for odometry
 *******************************************************************************/
 bool init_encoder = true;
-int32_t last_diff_tick[WHEEL_NUM] = {0.0, 0.0};
+int32_t last_diff_tick[WHEEL_NUM] = {0, 0};
 double  last_rad[WHEEL_NUM]       = {0.0, 0.0};
 
 /*******************************************************************************
@@ -198,6 +214,7 @@ Turtlebot3Sensor sensors;
 * Declaration for controllers
 *******************************************************************************/
 Turtlebot3Controller controllers;
+float zero_velocity[WHEEL_NUM] = {0.0, 0.0};
 float goal_velocity[WHEEL_NUM] = {0.0, 0.0};
 float goal_velocity_from_button[WHEEL_NUM] = {0.0, 0.0};
 float goal_velocity_from_cmd[WHEEL_NUM] = {0.0, 0.0};

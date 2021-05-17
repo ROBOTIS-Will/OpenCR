@@ -31,7 +31,9 @@ void setup()
 
   nh.subscribe(cmd_vel_sub);
   nh.subscribe(joint_position_sub);
+  nh.subscribe(joint_move_time_sub);
   nh.subscribe(gripper_position_sub);
+  nh.subscribe(gripper_move_time_sub);
   nh.subscribe(sound_sub);
   nh.subscribe(motor_power_sub);
   nh.subscribe(reset_sub);
@@ -48,8 +50,8 @@ void setup()
   tf_broadcaster.init(nh);
 
   // Setting for Dynamixel motors
-  motor_driver.init();
-  joint_driver.init();
+  motor_driver.init(NAME);
+  manipulator_driver.init(&joint_id[0], joint_cnt, &gripper_id[0], gripper_cnt);
 
   // Setting for IMU
   sensors.init();
@@ -79,12 +81,13 @@ void loop()
 {
   uint32_t t = millis();
   updateTime();
-  updateVariable();
+  updateVariable(nh.connected());
+  updateTFPrefix(nh.connected());
 
   if ((t-tTime[0]) >= (1000 / CONTROL_MOTOR_SPEED_FREQUENCY))
   {
     updateGoalVelocity();
-    motor_driver.controlMotor(WHEEL_SEPARATION, goal_velocity);
+    motor_driver.controlMotor(WHEEL_RADIUS, WHEEL_SEPARATION, goal_velocity);
     tTime[0] = t;
   }
 
@@ -123,6 +126,12 @@ void loop()
   }
 #endif
 
+  if ((t-tTime[6]) >= (1000 / JOINT_CONTROL_FREQEUNCY))
+  {
+    jointControl();
+    tTime[6] = t;
+  }
+
   // Send log message after ROS connection
   sendLogMsg();
 
@@ -134,6 +143,10 @@ void loop()
 
   // Update the IMU unit
   sensors.updateIMU();
+
+  // TODO
+  // Update sonar data
+  // sensors.updateSonar(t);
 
   // Start Gyro Calibration after ROS connection
   updateGyroCali();
@@ -147,8 +160,8 @@ void loop()
   // Call all the callbacks waiting to be called at that point in time
   nh.spinOnce();
 
-  // give the serial link time to process
-  delay(10);
+  // Wait the serial link time to process
+  waitForSerialLink(nh.connected());
 }
 
 /*******************************************************************************
@@ -164,27 +177,49 @@ void commandVelocityCallback(const geometry_msgs::Twist& cmd_vel_msg)
 }
 
 /*******************************************************************************
-* Callback function for joint position msg
+* Callback function for joint trajectory msg
 *******************************************************************************/
-void goalJointPositionCallback(const sensor_msgs::JointState& goal_joint_position_msg)
+void jointTrajectoryPointCallback(const std_msgs::Float64MultiArray& joint_trajectory_point_msg)
 {
-  double goal_joint_position[JOINT_NUM] = {0.0, 0.0, 0.0, 0.0};
+  if (is_moving == false)
+  {
+    joint_trajectory_point = joint_trajectory_point_msg;
+    is_moving = true;
+  }
+}
 
-  for (int index = 0; index < JOINT_NUM; index++)
-    goal_joint_position[index] = goal_joint_position_msg.position[index];
+/*******************************************************************************
+* Callback function for joint move time msg
+*******************************************************************************/
+void jointMoveTimeCallback(const std_msgs::Float64& time_msg)
+{
+  double data = time_msg.data;
 
-  joint_driver.writeJointPosition(goal_joint_position);
+  manipulator_driver.writeJointProfileControlParam(data);
 }
 
 /*******************************************************************************
 * Callback function for gripper position msg
 *******************************************************************************/
-void goalGripperPositionCallback(const sensor_msgs::JointState& goal_gripper_position_msg)
+void gripperPositionCallback(const std_msgs::Float64MultiArray& gripper_msg)
 {
-  double goal_gripper_position = goal_gripper_position_msg.position[0];
-  goal_gripper_position = mapd(goal_gripper_position, -0.01, 0.01, 0.90, -0.80);
+  double goal_gripper_position[5] = {0.0, };
+  const double OPEN_MANIPULATOR_GRIPPER_OFFSET = -0.015f;
 
-  joint_driver.writeGripperPosition(goal_gripper_position);
+  for (int index = 0; index < gripper_cnt; index++)
+    goal_gripper_position[index] = gripper_msg.data[index] / OPEN_MANIPULATOR_GRIPPER_OFFSET;
+
+  manipulator_driver.writeGripperPosition(goal_gripper_position);
+}
+
+/*******************************************************************************
+* Callback function for gripper move time msg
+*******************************************************************************/
+void gripperMoveTimeCallback(const std_msgs::Float64& time_msg)
+{
+  double data = time_msg.data;
+  
+  manipulator_driver.writeGripperProfileControlParam(data);
 }
 
 /*******************************************************************************
@@ -203,8 +238,7 @@ void motorPowerCallback(const std_msgs::Bool& power_msg)
   bool dxl_power = power_msg.data;
 
   motor_driver.setTorque(dxl_power);
-  joint_driver.setJointTorque(dxl_power);
-  joint_driver.setGripperTorque(dxl_power);
+  manipulator_driver.setTorque(dxl_power);
 }
 
 /*******************************************************************************
@@ -213,6 +247,8 @@ void motorPowerCallback(const std_msgs::Bool& power_msg)
 void resetCallback(const std_msgs::Empty& reset_msg)
 {
   char log_msg[50];
+
+  (void)(reset_msg);
 
   sprintf(log_msg, "Start Calibration of Gyro");
   nh.loginfo(log_msg);
@@ -247,7 +283,7 @@ void publishImuMsg(void)
   imu_msg = sensors.getIMU();
 
   imu_msg.header.stamp    = rosNow();
-  imu_msg.header.frame_id = "imu_link";
+  imu_msg.header.frame_id = imu_frame_id;
 
   imu_pub.publish(&imu_msg);
 }
@@ -260,7 +296,7 @@ void publishMagMsg(void)
   mag_msg = sensors.getMag();
 
   mag_msg.header.stamp    = rosNow();
-  mag_msg.header.frame_id = "mag_link";
+  mag_msg.header.frame_id = mag_frame_id;
 
   mag_pub.publish(&mag_msg);
 }
@@ -303,8 +339,8 @@ void publishSensorStateMsg(void)
 *******************************************************************************/
 void publishVersionInfoMsg(void)
 {
-  version_info_msg.hardware = HARDWARE_VER;
-  version_info_msg.software = SOFTWARE_VER;
+  version_info_msg.hardware = "0.0.0";
+  version_info_msg.software = "0.0.0";
   version_info_msg.firmware = FIRMWARE_VER;
 
   version_info_pub.publish(&version_info_msg);
@@ -359,12 +395,73 @@ void publishDriveInformation(void)
 }
 
 /*******************************************************************************
+* Update TF Prefix
+*******************************************************************************/
+void updateTFPrefix(bool isConnected)
+{
+  static bool isChecked = false;
+  char log_msg[50];
+
+  if (isConnected)
+  {
+    if (isChecked == false)
+    {
+      nh.getParam("~tf_prefix", &get_tf_prefix);
+
+      if (!strcmp(get_tf_prefix, ""))
+      {
+        sprintf(odom_header_frame_id, "odom");
+        sprintf(odom_child_frame_id, "base_footprint");  
+
+        sprintf(imu_frame_id, "imu_link");
+        sprintf(mag_frame_id, "mag_link");
+        sprintf(joint_state_header_frame_id, "base_link");
+      }
+      else
+      {
+        strcpy(odom_header_frame_id, get_tf_prefix);
+        strcpy(odom_child_frame_id, get_tf_prefix);
+
+        strcpy(imu_frame_id, get_tf_prefix);
+        strcpy(mag_frame_id, get_tf_prefix);
+        strcpy(joint_state_header_frame_id, get_tf_prefix);
+
+        strcat(odom_header_frame_id, "/odom");
+        strcat(odom_child_frame_id, "/base_footprint");
+
+        strcat(imu_frame_id, "/imu_link");
+        strcat(mag_frame_id, "/mag_link");
+        strcat(joint_state_header_frame_id, "/base_link");
+      }
+
+      sprintf(log_msg, "Setup TF on Odometry [%s]", odom_header_frame_id);
+      nh.loginfo(log_msg); 
+
+      sprintf(log_msg, "Setup TF on IMU [%s]", imu_frame_id);
+      nh.loginfo(log_msg); 
+
+      sprintf(log_msg, "Setup TF on MagneticField [%s]", mag_frame_id);
+      nh.loginfo(log_msg); 
+
+      sprintf(log_msg, "Setup TF on JointState [%s]", joint_state_header_frame_id);
+      nh.loginfo(log_msg); 
+
+      isChecked = true;
+    }
+  }
+  else
+  {
+    isChecked = false;
+  }
+}
+
+/*******************************************************************************
 * Update the odometry
 *******************************************************************************/
 void updateOdometry(void)
 {
-  odom.header.frame_id = "odom";
-  odom.child_frame_id  = "base_link";
+  odom.header.frame_id = odom_header_frame_id;
+  odom.child_frame_id  = odom_child_frame_id;
 
   odom.pose.pose.position.x = odom_pose[0];
   odom.pose.pose.position.y = odom_pose[1];
@@ -380,37 +477,40 @@ void updateOdometry(void)
 *******************************************************************************/
 void updateJointStates(void)
 {
-  static float joint_states_pos[WHEEL_NUM + JOINT_NUM + PALM_NUM] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-  static float joint_states_vel[WHEEL_NUM + JOINT_NUM + PALM_NUM] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-  static float joint_states_eff[WHEEL_NUM + JOINT_NUM + PALM_NUM] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  static float joint_states_pos[20] = {0.0, };
+  static float joint_states_vel[20] = {0.0, };
+  static float joint_states_eff[20] = {0.0, };
 
-  static double get_joint_position[JOINT_NUM + GRIP_NUM] = {0.0, 0.0, 0.0, 0.0, 0.0};
-  static double get_joint_velocity[JOINT_NUM + GRIP_NUM] = {0.0, 0.0, 0.0, 0.0, 0.0};
+  const double OPEN_MANIPULATOR_GRIPPER_OFFSET = -0.015f;
 
-  joint_driver.readPosition(get_joint_position);
-  joint_driver.readVelocity(get_joint_velocity);
+  double get_joint_position[joint_cnt + gripper_cnt];
+  double get_joint_velocity[joint_cnt + gripper_cnt];
+  double get_joint_current[joint_cnt + gripper_cnt];
+
+  manipulator_driver.syncReadDynamixelInfo();
+  manipulator_driver.getPosition(get_joint_position);
+  manipulator_driver.getVelocity(get_joint_velocity);
+  manipulator_driver.getCurrent(get_joint_current);
 
   joint_states_pos[LEFT]  = last_rad[LEFT];
   joint_states_pos[RIGHT] = last_rad[RIGHT];
-  joint_states_pos[2] = get_joint_position[0];
-  joint_states_pos[3] = get_joint_position[1];
-  joint_states_pos[4] = get_joint_position[2];
-  joint_states_pos[5] = get_joint_position[3];
-  joint_states_pos[6] = mapd(get_joint_position[4], 0.90, -0.80, -0.01, 0.01);
-  joint_states_pos[7] = joint_states_pos[6];
 
   joint_states_vel[LEFT]  = last_velocity[LEFT];
   joint_states_vel[RIGHT] = last_velocity[RIGHT];
-  joint_states_vel[2] = get_joint_velocity[0];
-  joint_states_vel[3] = get_joint_velocity[1];
-  joint_states_vel[4] = get_joint_velocity[2];
-  joint_states_vel[5] = get_joint_velocity[3];
-  joint_states_vel[6] = get_joint_velocity[4];
-  joint_states_vel[7] = joint_states_vel[6];
+
+  for (uint8_t num = 0; num < (joint_cnt + gripper_cnt); num++)
+  {
+    if (num >= joint_cnt)
+      get_joint_position[num] = get_joint_position[num] * OPEN_MANIPULATOR_GRIPPER_OFFSET;
+
+    joint_states_pos[WHEEL_NUM + num] = get_joint_position[num];
+    joint_states_vel[WHEEL_NUM + num] = get_joint_velocity[num];
+    joint_states_eff[WHEEL_NUM + num] = get_joint_current[num];
+  }
 
   joint_states.position = joint_states_pos;
   joint_states.velocity = joint_states_vel;
-  joint_states.effort   = joint_states_eff;
+  joint_states.effort = joint_states_eff;
 }
 
 /*******************************************************************************
@@ -419,7 +519,7 @@ void updateJointStates(void)
 void updateTF(geometry_msgs::TransformStamped& odom_tf)
 {
   odom_tf.header = odom.header;
-  odom_tf.child_frame_id = "base_footprint";
+  odom_tf.child_frame_id = odom.child_frame_id;
   odom_tf.transform.translation.x = odom.pose.pose.position.x;
   odom_tf.transform.translation.y = odom.pose.pose.position.y;
   odom_tf.transform.translation.z = odom.pose.pose.position.z;
@@ -432,14 +532,14 @@ void updateTF(geometry_msgs::TransformStamped& odom_tf)
 void updateMotorInfo(int32_t left_tick, int32_t right_tick)
 {
   int32_t current_tick = 0;
-  static int32_t last_tick[WHEEL_NUM] = {0.0, 0.0};
+  static int32_t last_tick[WHEEL_NUM] = {0, 0};
   
   if (init_encoder)
   {
     for (int index = 0; index < WHEEL_NUM; index++)
     {
       last_diff_tick[index] = 0.0;
-      last_tick[index]      = 0.0;
+      last_tick[index]      = 0;
       last_rad[index]       = 0.0;
 
       last_velocity[index]  = 0.0;
@@ -526,6 +626,71 @@ bool calcOdometry(double diff_time)
 }
 
 /*******************************************************************************
+* Manipulator's joint control
+*******************************************************************************/
+void jointControl(void)
+{
+  const uint8_t POINT_SIZE = joint_cnt + 1; // Add time parameter
+  const double JOINT_CONTROL_PERIOD = 1.0f / (double)JOINT_CONTROL_FREQEUNCY;
+  static uint32_t points = 0;
+
+  static uint8_t wait_for_write = 0;
+  static uint8_t loop_cnt = 0;
+
+  if (is_moving == true)
+  {
+    uint32_t all_points_cnt = joint_trajectory_point.data_length;
+    uint8_t write_cnt = 0;
+
+    if (loop_cnt < (wait_for_write))
+    {
+      loop_cnt++;
+      return;
+    }
+    else
+    {
+      double goal_joint_position[joint_cnt];
+      double move_time = 0.0f;
+
+      if (points == 0) move_time = joint_trajectory_point.data[points + POINT_SIZE] - joint_trajectory_point.data[points];
+      else if ((points + POINT_SIZE) >= all_points_cnt) move_time = joint_trajectory_point.data[points] / 2.0f;
+      else  move_time = joint_trajectory_point.data[points] - joint_trajectory_point.data[points - POINT_SIZE];
+
+      for (uint32_t positions = points + 1; positions < (points + POINT_SIZE); positions++)
+      {        
+        if ((points + POINT_SIZE) >= all_points_cnt)
+        {
+          goal_joint_position[write_cnt] = joint_trajectory_point.data[positions];
+        }
+        else
+        {
+          double offset = 2.0f * (joint_trajectory_point.data[positions + POINT_SIZE] - joint_trajectory_point.data[positions]);
+          goal_joint_position[write_cnt] = joint_trajectory_point.data[positions] + offset;
+        }
+        write_cnt++;
+      }
+
+      manipulator_driver.writeJointProfileControlParam(move_time * 2.0f);
+      manipulator_driver.writeJointPosition(goal_joint_position);
+
+      wait_for_write = move_time / JOINT_CONTROL_PERIOD;
+      points = points + POINT_SIZE;
+
+      if (points >= all_points_cnt)
+      {
+        points = 0;
+        wait_for_write = 0;
+        is_moving = false;
+      }
+      else
+      {
+        loop_cnt = 0;
+      }
+    }
+  }
+}
+
+/*******************************************************************************
 * Turtlebot3 test drive using push buttons
 *******************************************************************************/
 void driveTest(uint8_t buttons)
@@ -582,11 +747,11 @@ void driveTest(uint8_t buttons)
 /*******************************************************************************
 * Update variable (initialization)
 *******************************************************************************/
-void updateVariable(void)
+void updateVariable(bool isConnected)
 {
   static bool variable_flag = false;
   
-  if (nh.connected())
+  if (isConnected)
   {
     if (variable_flag == false)
     {      
@@ -603,11 +768,33 @@ void updateVariable(void)
 }
 
 /*******************************************************************************
+* Wait for Serial Link
+*******************************************************************************/
+void waitForSerialLink(bool isConnected)
+{
+  static bool wait_flag = false;
+  
+  if (isConnected)
+  {
+    if (wait_flag == false)
+    {      
+      delay(10);
+
+      wait_flag = true;
+    }
+  }
+  else
+  {
+    wait_flag = false;
+  }
+}
+
+/*******************************************************************************
 * Update the base time for interpolation
 *******************************************************************************/
 void updateTime()
 {
-  current_offset = micros();
+  current_offset = millis();
   current_time = nh.now();
 }
 
@@ -616,23 +803,19 @@ void updateTime()
 *******************************************************************************/
 ros::Time rosNow()
 {
-  return addMicros(current_time, micros() - current_offset);
+  return nh.now();
 }
 
 /*******************************************************************************
-* Time Interpolation function
+* Time Interpolation function (deprecated)
 *******************************************************************************/
 ros::Time addMicros(ros::Time & t, uint32_t _micros)
 {
   uint32_t sec, nsec;
 
-  sec  = _micros / 1000000 + t.sec;
-  nsec = _micros % 1000000 + 1000 * (t.nsec / 1000);
-  
-  if (nsec >= 1e9) 
-  {
-    sec++, nsec--;
-  }
+  sec  = _micros / 1000 + t.sec;
+  nsec = _micros % 1000000000 + t.nsec;
+
   return ros::Time(sec, nsec);
 }
 
@@ -688,8 +871,8 @@ void sendLogMsg(void)
       sprintf(log_msg, "Connected to OpenCR board!");
       nh.loginfo(log_msg);
 
-      sprintf(log_msg, init_log_data);
-      nh.loginfo(log_msg);
+//       sprintf(log_msg, init_log_data);
+//       nh.loginfo(log_msg);
 
       sprintf(log_msg, "--------------------------");
       nh.loginfo(log_msg);
@@ -734,15 +917,15 @@ void initOdom(void)
 *******************************************************************************/
 void initJointStates(void)
 {
-  static char *joint_states_name[] = {"wheel_left_joint", "wheel_right_joint", "joint1", "joint2", "joint3", "joint4", "grip_joint", "grip_joint_sub"};
+  static char *joint_states_name[] = {"wheel_left_joint", "wheel_right_joint", "joint1", "joint2", "joint3", "joint4", "gripper"};
 
-  joint_states.header.frame_id = "base_link";
+  joint_states.header.frame_id = joint_state_header_frame_id;
   joint_states.name            = joint_states_name;
 
-  joint_states.name_length     = WHEEL_NUM + JOINT_NUM + PALM_NUM;
-  joint_states.position_length = WHEEL_NUM + JOINT_NUM + PALM_NUM;
-  joint_states.velocity_length = WHEEL_NUM + JOINT_NUM + PALM_NUM;
-  joint_states.effort_length   = WHEEL_NUM + JOINT_NUM + PALM_NUM;
+  joint_states.name_length     = WHEEL_NUM + joint_cnt + gripper_cnt;
+  joint_states.position_length = WHEEL_NUM + joint_cnt + gripper_cnt;
+  joint_states.velocity_length = WHEEL_NUM + joint_cnt + gripper_cnt;
+  joint_states.effort_length   = WHEEL_NUM + joint_cnt + gripper_cnt;
 }
 
 /*******************************************************************************
@@ -793,23 +976,24 @@ void sendDebuglog(void)
   DEBUG_SERIAL.println("DYNAMIXELS");
   DEBUG_SERIAL.println("---------------------------------------");
   DEBUG_SERIAL.println("Torque(wheel) : " + String(motor_driver.getTorque()));
-  DEBUG_SERIAL.println("Torque(joint) : " + String(joint_driver.getJointTorque()));
-  DEBUG_SERIAL.println("Torque(gripper) : " + String(joint_driver.getGripperTorque()));
+  DEBUG_SERIAL.println("Torque(joint) : " + String(manipulator_driver.getTorqueState()));
 
   int32_t encoder[WHEEL_NUM] = {0, 0};
   motor_driver.readEncoder(encoder[LEFT], encoder[RIGHT]);
-
-  double present_position[JOINT_NUM + GRIP_NUM] = {0, 0, 0, 0, 0};
-  joint_driver.readPosition(present_position);
   
   DEBUG_SERIAL.println("Encoder(left) : " + String(encoder[LEFT]));
   DEBUG_SERIAL.println("Encoder(right) : " + String(encoder[RIGHT]));
 
-  DEBUG_SERIAL.print("Present Position(Joint 1) : ");       DEBUG_SERIAL.println(present_position[0]);
-  DEBUG_SERIAL.print("Present Position(Joint 2) : ");       DEBUG_SERIAL.println(present_position[1]);
-  DEBUG_SERIAL.print("Present Position(Joint 3) : ");       DEBUG_SERIAL.println(present_position[2]);
-  DEBUG_SERIAL.print("Present Position(Joint 4) : ");       DEBUG_SERIAL.println(present_position[3]);
-  DEBUG_SERIAL.print("Present Position(Gripper Joint) : "); DEBUG_SERIAL.println(present_position[4]);
+  double present_position[joint_cnt + gripper_cnt];
+  manipulator_driver.getPosition(present_position);
+
+  for (uint8_t num = 0; num < joint_cnt + gripper_cnt; num++)
+  {
+    DEBUG_SERIAL.print("Present Position(Joint_");
+    DEBUG_SERIAL.print(num);
+    DEBUG_SERIAL.print(") : ");
+    DEBUG_SERIAL.println(present_position[num]);
+  }
 
   DEBUG_SERIAL.println("---------------------------------------");
   DEBUG_SERIAL.println("TurtleBot3");

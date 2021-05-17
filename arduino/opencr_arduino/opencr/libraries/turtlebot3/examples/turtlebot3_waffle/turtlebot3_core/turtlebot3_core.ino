@@ -34,7 +34,6 @@ void setup()
   nh.subscribe(motor_power_sub);
   nh.subscribe(reset_sub);
 
-
   nh.advertise(sensor_state_pub);  
   nh.advertise(version_info_pub);
   nh.advertise(imu_pub);
@@ -47,7 +46,7 @@ void setup()
   tf_broadcaster.init(nh);
 
   // Setting for Dynamixel motors
-  motor_driver.init();
+  motor_driver.init(NAME);
 
   // Setting for IMU
   sensors.init();
@@ -77,12 +76,19 @@ void loop()
 {
   uint32_t t = millis();
   updateTime();
-  updateVariable();
+  updateVariable(nh.connected());
+  updateTFPrefix(nh.connected());
 
   if ((t-tTime[0]) >= (1000 / CONTROL_MOTOR_SPEED_FREQUENCY))
   {
     updateGoalVelocity();
-    motor_driver.controlMotor(WHEEL_SEPARATION, goal_velocity);
+    if ((t-tTime[6]) > CONTROL_MOTOR_TIMEOUT) 
+    {
+      motor_driver.controlMotor(WHEEL_RADIUS, WHEEL_SEPARATION, zero_velocity);
+    } 
+    else {
+      motor_driver.controlMotor(WHEEL_RADIUS, WHEEL_SEPARATION, goal_velocity);
+    }
     tTime[0] = t;
   }
 
@@ -125,7 +131,9 @@ void loop()
   sendLogMsg();
 
   // Receive data from RC100 
-  controllers.getRCdata(goal_velocity_from_rc100);
+  bool clicked_state = controllers.getRCdata(goal_velocity_from_rc100);
+  if (clicked_state == true)  
+    tTime[6] = millis();
 
   // Check push button pressed for simple test drive
   driveTest(diagnosis.getButtonPress(3000));
@@ -138,7 +146,7 @@ void loop()
   // sensors.updateSonar(t);
 
   // Start Gyro Calibration after ROS connection
-  updateGyroCali();
+  updateGyroCali(nh.connected());
 
   // Show LED status
   diagnosis.showLedStatus(nh.connected());
@@ -149,8 +157,8 @@ void loop()
   // Call all the callbacks waiting to be called at that point in time
   nh.spinOnce();
 
-  // give the serial link time to process
-  delay(10);
+  // Wait the serial link time to process
+  waitForSerialLink(nh.connected());
 }
 
 /*******************************************************************************
@@ -163,6 +171,7 @@ void commandVelocityCallback(const geometry_msgs::Twist& cmd_vel_msg)
 
   goal_velocity_from_cmd[LINEAR]  = constrain(goal_velocity_from_cmd[LINEAR],  MIN_LINEAR_VELOCITY, MAX_LINEAR_VELOCITY);
   goal_velocity_from_cmd[ANGULAR] = constrain(goal_velocity_from_cmd[ANGULAR], MIN_ANGULAR_VELOCITY, MAX_ANGULAR_VELOCITY);
+  tTime[6] = millis();
 }
 
 /*******************************************************************************
@@ -189,6 +198,8 @@ void motorPowerCallback(const std_msgs::Bool& power_msg)
 void resetCallback(const std_msgs::Empty& reset_msg)
 {
   char log_msg[50];
+
+  (void)(reset_msg);
 
   sprintf(log_msg, "Start Calibration of Gyro");
   nh.loginfo(log_msg);
@@ -223,7 +234,7 @@ void publishImuMsg(void)
   imu_msg = sensors.getIMU();
 
   imu_msg.header.stamp    = rosNow();
-  imu_msg.header.frame_id = "imu_link";
+  imu_msg.header.frame_id = imu_frame_id;
 
   imu_pub.publish(&imu_msg);
 }
@@ -236,7 +247,7 @@ void publishMagMsg(void)
   mag_msg = sensors.getMag();
 
   mag_msg.header.stamp    = rosNow();
-  mag_msg.header.frame_id = "mag_link";
+  mag_msg.header.frame_id = mag_frame_id;
 
   mag_pub.publish(&mag_msg);
 }
@@ -279,8 +290,8 @@ void publishSensorStateMsg(void)
 *******************************************************************************/
 void publishVersionInfoMsg(void)
 {
-  version_info_msg.hardware = HARDWARE_VER;
-  version_info_msg.software = SOFTWARE_VER;
+  version_info_msg.hardware = "0.0.0";
+  version_info_msg.software = "0.0.0";
   version_info_msg.firmware = FIRMWARE_VER;
 
   version_info_pub.publish(&version_info_msg);
@@ -335,12 +346,73 @@ void publishDriveInformation(void)
 }
 
 /*******************************************************************************
+* Update TF Prefix
+*******************************************************************************/
+void updateTFPrefix(bool isConnected)
+{
+  static bool isChecked = false;
+  char log_msg[50];
+
+  if (isConnected)
+  {
+    if (isChecked == false)
+    {
+      nh.getParam("~tf_prefix", &get_tf_prefix);
+
+      if (!strcmp(get_tf_prefix, ""))
+      {
+        sprintf(odom_header_frame_id, "odom");
+        sprintf(odom_child_frame_id, "base_footprint");  
+
+        sprintf(imu_frame_id, "imu_link");
+        sprintf(mag_frame_id, "mag_link");
+        sprintf(joint_state_header_frame_id, "base_link");
+      }
+      else
+      {
+        strcpy(odom_header_frame_id, get_tf_prefix);
+        strcpy(odom_child_frame_id, get_tf_prefix);
+
+        strcpy(imu_frame_id, get_tf_prefix);
+        strcpy(mag_frame_id, get_tf_prefix);
+        strcpy(joint_state_header_frame_id, get_tf_prefix);
+
+        strcat(odom_header_frame_id, "/odom");
+        strcat(odom_child_frame_id, "/base_footprint");
+
+        strcat(imu_frame_id, "/imu_link");
+        strcat(mag_frame_id, "/mag_link");
+        strcat(joint_state_header_frame_id, "/base_link");
+      }
+
+      sprintf(log_msg, "Setup TF on Odometry [%s]", odom_header_frame_id);
+      nh.loginfo(log_msg); 
+
+      sprintf(log_msg, "Setup TF on IMU [%s]", imu_frame_id);
+      nh.loginfo(log_msg); 
+
+      sprintf(log_msg, "Setup TF on MagneticField [%s]", mag_frame_id);
+      nh.loginfo(log_msg); 
+
+      sprintf(log_msg, "Setup TF on JointState [%s]", joint_state_header_frame_id);
+      nh.loginfo(log_msg); 
+
+      isChecked = true;
+    }
+  }
+  else
+  {
+    isChecked = false;
+  }
+}
+
+/*******************************************************************************
 * Update the odometry
 *******************************************************************************/
 void updateOdometry(void)
 {
-  odom.header.frame_id = "odom";
-  odom.child_frame_id  = "base_link";
+  odom.header.frame_id = odom_header_frame_id;
+  odom.child_frame_id  = odom_child_frame_id;
 
   odom.pose.pose.position.x = odom_pose[0];
   odom.pose.pose.position.y = odom_pose[1];
@@ -358,7 +430,7 @@ void updateJointStates(void)
 {
   static float joint_states_pos[WHEEL_NUM] = {0.0, 0.0};
   static float joint_states_vel[WHEEL_NUM] = {0.0, 0.0};
-  static float joint_states_eff[WHEEL_NUM] = {0.0, 0.0};
+  //static float joint_states_eff[WHEEL_NUM] = {0.0, 0.0};
 
   joint_states_pos[LEFT]  = last_rad[LEFT];
   joint_states_pos[RIGHT] = last_rad[RIGHT];
@@ -376,7 +448,7 @@ void updateJointStates(void)
 void updateTF(geometry_msgs::TransformStamped& odom_tf)
 {
   odom_tf.header = odom.header;
-  odom_tf.child_frame_id = "base_footprint";
+  odom_tf.child_frame_id = odom.child_frame_id;
   odom_tf.transform.translation.x = odom.pose.pose.position.x;
   odom_tf.transform.translation.y = odom.pose.pose.position.y;
   odom_tf.transform.translation.z = odom.pose.pose.position.z;
@@ -389,14 +461,14 @@ void updateTF(geometry_msgs::TransformStamped& odom_tf)
 void updateMotorInfo(int32_t left_tick, int32_t right_tick)
 {
   int32_t current_tick = 0;
-  static int32_t last_tick[WHEEL_NUM] = {0.0, 0.0};
+  static int32_t last_tick[WHEEL_NUM] = {0, 0};
   
   if (init_encoder)
   {
     for (int index = 0; index < WHEEL_NUM; index++)
     {
-      last_diff_tick[index] = 0.0;
-      last_tick[index]      = 0.0;
+      last_diff_tick[index] = 0;
+      last_tick[index]      = 0;
       last_rad[index]       = 0.0;
 
       last_velocity[index]  = 0.0;
@@ -501,6 +573,7 @@ void driveTest(uint8_t buttons)
     saved_tick[RIGHT] = current_tick[RIGHT];
 
     diff_encoder = TEST_DISTANCE / (0.207 / 4096); // (Circumference of Wheel) / (The number of tick per revolution)
+    tTime[6] = millis();
   }
   else if (buttons & (1<<1))
   {
@@ -508,6 +581,7 @@ void driveTest(uint8_t buttons)
     saved_tick[RIGHT] = current_tick[RIGHT];
 
     diff_encoder = (TEST_RADIAN * TURNING_RADIUS) / (0.207 / 4096);
+    tTime[6] = millis();
   }
 
   if (move[LINEAR])
@@ -515,6 +589,7 @@ void driveTest(uint8_t buttons)
     if (abs(saved_tick[RIGHT] - current_tick[RIGHT]) <= diff_encoder)
     {
       goal_velocity_from_button[LINEAR]  = 0.05;
+      tTime[6] = millis();
     }
     else
     {
@@ -527,6 +602,7 @@ void driveTest(uint8_t buttons)
     if (abs(saved_tick[RIGHT] - current_tick[RIGHT]) <= diff_encoder)
     {
       goal_velocity_from_button[ANGULAR]= -0.7;
+      tTime[6] = millis();
     }
     else
     {
@@ -539,11 +615,11 @@ void driveTest(uint8_t buttons)
 /*******************************************************************************
 * Update variable (initialization)
 *******************************************************************************/
-void updateVariable(void)
+void updateVariable(bool isConnected)
 {
   static bool variable_flag = false;
   
-  if (nh.connected())
+  if (isConnected)
   {
     if (variable_flag == false)
     {      
@@ -560,11 +636,33 @@ void updateVariable(void)
 }
 
 /*******************************************************************************
+* Wait for Serial Link
+*******************************************************************************/
+void waitForSerialLink(bool isConnected)
+{
+  static bool wait_flag = false;
+  
+  if (isConnected)
+  {
+    if (wait_flag == false)
+    {      
+      delay(10);
+
+      wait_flag = true;
+    }
+  }
+  else
+  {
+    wait_flag = false;
+  }
+}
+
+/*******************************************************************************
 * Update the base time for interpolation
 *******************************************************************************/
 void updateTime()
 {
-  current_offset = micros();
+  current_offset = millis();
   current_time = nh.now();
 }
 
@@ -573,33 +671,31 @@ void updateTime()
 *******************************************************************************/
 ros::Time rosNow()
 {
-  return addMicros(current_time, micros() - current_offset);
+  return nh.now();
 }
 
 /*******************************************************************************
-* Time Interpolation function
+* Time Interpolation function (deprecated)
 *******************************************************************************/
 ros::Time addMicros(ros::Time & t, uint32_t _micros)
 {
   uint32_t sec, nsec;
 
-  sec  = _micros / 1000000 + t.sec;
-  nsec = _micros % 1000000 + 1000 * (t.nsec / 1000);
-  
-  if (nsec >= 1e9) 
-  {
-    sec++, nsec--;
-  }
+  sec  = _micros / 1000 + t.sec;
+  nsec = _micros % 1000000000 + t.nsec;
+
   return ros::Time(sec, nsec);
 }
 
 /*******************************************************************************
 * Start Gyro Calibration
 *******************************************************************************/
-void updateGyroCali(void)
+void updateGyroCali(bool isConnected)
 {
   static bool isEnded = false;
   char log_msg[50];
+
+  (void)(isConnected);
 
   if (nh.connected())
   {
@@ -692,9 +788,9 @@ void initOdom(void)
 *******************************************************************************/
 void initJointStates(void)
 {
-  static char *joint_states_name[] = {"wheel_left_joint", "wheel_right_joint"};
+  static char *joint_states_name[] = {(char*)"wheel_left_joint", (char*)"wheel_right_joint"};
 
-  joint_states.header.frame_id = "base_link";
+  joint_states.header.frame_id = joint_state_header_frame_id;
   joint_states.name            = joint_states_name;
 
   joint_states.name_length     = WHEEL_NUM;

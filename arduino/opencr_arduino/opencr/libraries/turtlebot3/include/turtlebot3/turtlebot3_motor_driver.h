@@ -31,8 +31,8 @@
 #define ADDR_X_PRESENT_POSITION         132
 
 // Limit values (XM430-W210-T and XM430-W350-T)
-#define LIMIT_X_MAX_VELOCITY            337     // MAX RPM is 77 when DXL is powered 12.0V
-                                                // 77 / 0.229 (RPM) = 336.24454...
+#define BURGER_DXL_LIMIT_MAX_VELOCITY            265     // MAX RPM is 61 when XL is powered 12.0V
+#define WAFFLE_DXL_LIMIT_MAX_VELOCITY            330     // MAX RPM is 77 when XM is powered 12.0V
 
 // Data Byte Length
 #define LEN_X_TORQUE_ENABLE             1
@@ -56,10 +56,13 @@
 #define LEFT                            0
 #define RIGHT                           1
 
-#define VELOCITY_CONSTANT_VALUE         1263.632956882  // V = r * w = r     *        (RPM             * 0.10472)
-                                                        //           = 0.033 * (0.229 * Goal_Velocity) * 0.10472
-                                                        //
-                                                        // Goal_Velocity = V * 1263.632956882
+#define LINEAR                          0
+#define ANGULAR                         1
+
+#define VELOCITY_CONSTANT_VALUE         41.69988758  // V = r * w = r     *        (RPM             * 0.10472)
+                                                     //           = r     * (0.229 * Goal_Velocity) * 0.10472
+                                                     //
+                                                     // Goal_Velocity = V / r * 41.69988757710309
 
 #define DEBUG_SERIAL  SerialBT2
 
@@ -68,13 +71,13 @@ class Turtlebot3MotorDriver
  public:
   Turtlebot3MotorDriver();
   ~Turtlebot3MotorDriver();
-  bool init(void);
+  bool init(String turtlebot3);
   void close(void);
   bool setTorque(bool onoff);
   bool getTorque();
   bool readEncoder(int32_t &left_value, int32_t &right_value);
   bool writeVelocity(int64_t left_value, int64_t right_value);
-  bool controlMotor(const float wheel_separation, float* value);
+  bool controlMotor(const float wheel_radius, const float wheel_separation, float* value);
 
  private:
   uint32_t baudrate_;
@@ -82,6 +85,8 @@ class Turtlebot3MotorDriver
   uint8_t left_wheel_id_;
   uint8_t right_wheel_id_;
   bool torque_;
+
+  uint16_t dynamixel_limit_max_velocity_;
 
   dynamixel::PortHandler *portHandler_;
   dynamixel::PacketHandler *packetHandler_;

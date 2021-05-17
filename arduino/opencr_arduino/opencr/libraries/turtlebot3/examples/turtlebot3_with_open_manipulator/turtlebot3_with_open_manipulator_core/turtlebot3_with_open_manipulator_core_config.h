@@ -18,16 +18,16 @@
 
 #ifndef TURTLEBOT3_WITH_OPEN_MANIPULATOR_CORE_CONFIG_H_
 #define TURTLEBOT3_WITH_OPEN_MANIPULATOR_CORE_CONFIG_H_
+// #define NOETIC_SUPPORT          //uncomment this if writing code for ROS1 Noetic
 
 #include <ros.h>
 #include <ros/time.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Empty.h>
 #include <std_msgs/Int32.h>
-#include <sensor_msgs/Imu.h>
+#include <std_msgs/Float64.h>
+#include <std_msgs/Float64MultiArray.h>
 #include <sensor_msgs/JointState.h>
-#include <sensor_msgs/BatteryState.h>
-#include <sensor_msgs/MagneticField.h>
 #include <geometry_msgs/Vector3.h>
 #include <geometry_msgs/Twist.h>
 #include <tf/tf.h>
@@ -39,14 +39,11 @@
 #include <turtlebot3_msgs/VersionInfo.h>
 
 #include <TurtleBot3.h>
-#include <OpenManipulator.h>
 #include "turtlebot3_with_open_manipulator.h"
 
 #include <math.h>
 
-#define HARDWARE_VER "1.0.0"
-#define SOFTWARE_VER "1.0.0"
-#define FIRMWARE_VER "1.2.0"
+#define FIRMWARE_VER "2.0.2"
 
 #define CONTROL_MOTOR_SPEED_FREQUENCY          30   //hz
 #define IMU_PUBLISH_FREQUENCY                  200  //hz
@@ -54,6 +51,7 @@
 #define DRIVE_INFORMATION_PUBLISH_FREQUENCY    30   //hz
 #define VERSION_INFORMATION_PUBLISH_FREQUENCY  1    //hz 
 #define DEBUG_LOG_FREQUENCY                    10   //hz 
+#define JOINT_CONTROL_FREQEUNCY                100  //hz 
 
 #define WHEEL_NUM                        2
 
@@ -76,8 +74,10 @@
 
 // Callback function prototypes
 void commandVelocityCallback(const geometry_msgs::Twist& cmd_vel_msg);
-void goalJointPositionCallback(const sensor_msgs::JointState& goal_joint_position_msg);
-void goalGripperPositionCallback(const sensor_msgs::JointState& goal_gripper_position_msg);
+void jointTrajectoryPointCallback(const std_msgs::Float64MultiArray& joint_trajectory_point_msg);
+void jointMoveTimeCallback(const std_msgs::Float64& time_msg);
+void gripperPositionCallback(const std_msgs::Float64MultiArray& pos_msg);
+void gripperMoveTimeCallback(const std_msgs::Float64& time_msg);
 void soundCallback(const turtlebot3_msgs::Sound& sound_msg);
 void motorPowerCallback(const std_msgs::Bool& power_msg);
 void resetCallback(const std_msgs::Empty& reset_msg);
@@ -92,23 +92,27 @@ void publishBatteryStateMsg(void);
 void publishDriveInformation(void);
 
 ros::Time rosNow(void);
-ros::Time addMicros(ros::Time & t, uint32_t _micros);
+ros::Time addMicros(ros::Time & t, uint32_t _micros); // deprecated
 
-void updateVariable(void);
+void updateVariable(bool isConnected);
 void updateMotorInfo(int32_t left_tick, int32_t right_tick);
 void updateTime(void);
 void updateOdometry(void);
 void updateJoint(void);
 void updateTF(geometry_msgs::TransformStamped& odom_tf);
-void updateGyroCali(void);
+void updateGyroCali(bool isConnected);
 void updateGoalVelocity(void);
+void updateTFPrefix(bool isConnected);
 
 void initOdom(void);
 void initJointStates(void);
 
 bool calcOdometry(double diff_time);
 
+void jointControl(void);
+
 void sendLogMsg(void);
+void waitForSerialLink(bool isConnected);
 
 double mapd(double x, double in_min, double in_max, double out_min, double out_max);
 
@@ -120,13 +124,31 @@ ros::Time current_time;
 uint32_t current_offset;
 
 /*******************************************************************************
+* ROS Parameter
+*******************************************************************************/
+char get_prefix[100];
+char* get_tf_prefix = get_prefix;
+
+char odom_header_frame_id[30];
+char odom_child_frame_id[30];
+
+char imu_frame_id[30];
+char mag_frame_id[30];
+
+char joint_state_header_frame_id[30];
+
+/*******************************************************************************
 * Subscriber
 *******************************************************************************/
 ros::Subscriber<geometry_msgs::Twist> cmd_vel_sub("cmd_vel", commandVelocityCallback);
 
-ros::Subscriber<sensor_msgs::JointState> joint_position_sub("open_manipulator_with_tb3/goal_joint_position", goalJointPositionCallback);
+ros::Subscriber<std_msgs::Float64MultiArray> joint_position_sub("joint_trajectory_point", jointTrajectoryPointCallback);
 
-ros::Subscriber<sensor_msgs::JointState> gripper_position_sub("open_manipulator_with_tb3/goal_gripper_position", goalGripperPositionCallback);
+ros::Subscriber<std_msgs::Float64> joint_move_time_sub("joint_move_time", jointMoveTimeCallback);
+
+ros::Subscriber<std_msgs::Float64MultiArray> gripper_position_sub("gripper_position", gripperPositionCallback);
+
+ros::Subscriber<std_msgs::Float64> gripper_move_time_sub("gripper_move_time", gripperMoveTimeCallback);
 
 ros::Subscriber<turtlebot3_msgs::Sound> sound_sub("sound", soundCallback);
 
@@ -143,7 +165,7 @@ ros::Publisher sensor_state_pub("sensor_state", &sensor_state_msg);
 
 // Version information of Turtlebot3
 turtlebot3_msgs::VersionInfo version_info_msg;
-ros::Publisher version_info_pub("version_info", &version_info_msg);
+ros::Publisher version_info_pub("firmware_version", &version_info_msg);
 
 // IMU of Turtlebot3
 sensor_msgs::Imu imu_msg;
@@ -162,7 +184,11 @@ sensor_msgs::JointState joint_states;
 ros::Publisher joint_states_pub("joint_states", &joint_states);
 
 // Battey state of Turtlebot3
+#if defined NOETIC_SUPPORT
+sensor_msgs::BatteryStateNoetic battery_state_msg;
+#else
 sensor_msgs::BatteryState battery_state_msg;
+#endif
 ros::Publisher battery_state_pub("battery_state", &battery_state_msg);
 
 // Magnetic field
@@ -185,13 +211,19 @@ static uint32_t tTime[10];
 * Declaration for motor
 *******************************************************************************/
 Turtlebot3MotorDriver motor_driver;
-OpenManipulatorMotorDriver joint_driver;
+OpenManipulatorDriver manipulator_driver;
+
+uint8_t joint_id[JOINT_CNT] = {JOINT_ID_1, JOINT_ID_2, JOINT_ID_3, JOINT_ID_4};
+uint8_t joint_cnt = JOINT_CNT;
+
+uint8_t gripper_id[GRIPPER_CNT] = {GRIPPER_ID_1};
+uint8_t gripper_cnt = GRIPPER_CNT;
 
 /*******************************************************************************
 * Calculation for odometry
 *******************************************************************************/
 bool init_encoder = true;
-int32_t last_diff_tick[WHEEL_NUM] = {0.0, 0.0};
+int32_t last_diff_tick[WHEEL_NUM] = {0, 0};
 double  last_rad[WHEEL_NUM]       = {0.0, 0.0};
 
 /*******************************************************************************
@@ -230,5 +262,11 @@ double odom_vel[3];
 *******************************************************************************/
 bool setup_end        = false;
 uint8_t battery_state = 0;
+
+/*******************************************************************************
+* Joint Control
+*******************************************************************************/
+bool is_moving        = false;
+std_msgs::Float64MultiArray joint_trajectory_point;
 
 #endif // TURTLEBOT3_WITH_OPEN_MANIPULATOR_CONFIG_H_

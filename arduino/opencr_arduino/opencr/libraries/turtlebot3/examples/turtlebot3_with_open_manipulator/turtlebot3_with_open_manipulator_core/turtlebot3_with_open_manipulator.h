@@ -19,6 +19,10 @@
 #ifndef TURTLEBOT3_WITH_OPEN_MANIPULATOR_H_
 #define TURTLEBOT3_WITH_OPEN_MANIPULATOR_H_
 
+#include "open_manipulator_driver.h"
+
+#define NAME                             "Waffle or Waffle Pi"
+
 #define WHEEL_RADIUS                     0.033           // meter
 #define WHEEL_SEPARATION                 0.287           // meter (BURGER : 0.160, WAFFLE : 0.287)
 #define TURNING_RADIUS                   0.1435          // meter (BURGER : 0.080, WAFFLE : 0.1435)
@@ -26,12 +30,8 @@
 #define ENCODER_MIN                      -2147483648     // raw
 #define ENCODER_MAX                      2147483648      // raw
 
-#define JOINT_NUM                        4
-#define PALM_NUM                         2  // grip_joint + grip_joint_sub
-#define GRIP_NUM                         1    
-
-#define MAX_LINEAR_VELOCITY              0.25   // m/s   (BURGER : 0.22, WAFFLE : 0.25)
-#define MAX_ANGULAR_VELOCITY             1.82   // rad/s (BURGER : 2.84, WAFFLE : 1.82)
+#define MAX_LINEAR_VELOCITY              (WHEEL_RADIUS * 2 * 3.14159265359 * 77 / 60) // m/s  (BURGER : 61[rpm], WAFFLE : 77[rpm])
+#define MAX_ANGULAR_VELOCITY             (MAX_LINEAR_VELOCITY / TURNING_RADIUS)       // rad/s
 
 #define MIN_LINEAR_VELOCITY              -MAX_LINEAR_VELOCITY  
 #define MIN_ANGULAR_VELOCITY             -MAX_ANGULAR_VELOCITY 
